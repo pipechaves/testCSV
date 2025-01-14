@@ -12,7 +12,7 @@ class DealershipStaffSpider(scrapy.Spider):
         "https://www.toyotaofstamford.com/dealership/staff.htm",
         "https://www.billknightford.com/staff.aspx"
     ]
-    
+
     custom_settings = {
         'USER_AGENT': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
     }
@@ -34,7 +34,7 @@ class DealershipStaffSpider(scrapy.Spider):
 
     def parse(self, response):
         staff_links = response.xpath(
-            '//a[contains(text(), "Staff") or contains(text(), "Team") or contains(@href, "staff") or contains(@href, "about-us")]/@href'
+            '//a[contains(text(), "Staff") or contains(text(), "Meet") or contains(text(), "Team") or contains(@href, "staff") or contains(@href, "about-us")]/@href'
         ).extract()
 
         for link in staff_links:
@@ -53,17 +53,26 @@ class DealershipStaffSpider(scrapy.Spider):
             '//div[contains(@class, "employee") and @data-profile-row]'  # Match employees with data-profile-row attribute
         )
         
-        if staff_items:
-            for index, staff in enumerate(staff_items):
+        # Handle Toyota of Stamford specific structure
+        toyota_staff_items = response.xpath('//div[@class="yui3-u-1-6 staff"]/dl[@class="vcard"]')
+        
+        # Combine all found items
+        all_staff_items = staff_items + toyota_staff_items
+        
+        if all_staff_items:
+            for index, staff in enumerate(all_staff_items):
                 name = staff.xpath(
                     './/h3[contains(@class, "employee__name")]/strong/text() | '
                     './/h3[contains(@class, "employee__name")]/text() | '
                     './/h3/text() | '
                     './/div[contains(@class, "staff-title")]/text() | '
                     './/div[contains(@class, "name")]/text() | '
+                    './/dt[contains(@class, "fn")]/a/@name | '  # Toyota specific
                     './/@data-dotagging-affiliation'
                 ).get()
                 
+                name = name.strip() if name else None
+                                 
                 if not name.strip():
                     name = staff.xpath('.//h3[contains(@class, \"employee__name\")]/strong/text()').get()
                 #  Debug potential name extraction paths
@@ -75,7 +84,7 @@ class DealershipStaffSpider(scrapy.Spider):
                 # self.logger.debug(f"Path 3 (general h3): {staff.xpath('.//h3/text()').get()}")
                 # self.logger.debug(f"Path 4 (data-dotagging-affiliation): {staff.xpath('.//@data-dotagging-affiliation').get()}")
 
-                # Exit condition after processing the first staff item
+                # # Exit condition after processing the first staff item
                 # if index == 2:
                 #     break
 
@@ -83,6 +92,7 @@ class DealershipStaffSpider(scrapy.Spider):
                     './/h4[contains(@class, "employee__title")]/text() | '
                     './/h4/text() | '
                     './/div[contains(@class, "staff-desc")]/em/text() | '
+                    './/dt[contains(@class, "fn")]/a/span[1]/text() | '  # Toyota specific
                     './/div[contains(@class, "title")]/text()'
                 ).get()
 
@@ -92,7 +102,11 @@ class DealershipStaffSpider(scrapy.Spider):
                     encoded_email = obfuscated_email_href.split('#')[-1]
                     email = self.decode_cloudflare_email(encoded_email)
                 else:
-                    email = staff.xpath('.//a[contains(@href, "mailto:")]/@href').get(default='').replace("mailto:", "")
+                    email = staff.xpath(
+                        './/a[contains(@href, "mailto:")]/@href | '
+                        './/dd[contains(@class, "email")]/text()'  # Toyota specific
+                    ).get(default='').replace("mailto:", "")
+               
 
                 # Phone extraction with fallback
                 phone_div = staff.xpath('.//div[contains(@class, "staffphone")]/text()').getall()
@@ -104,15 +118,19 @@ class DealershipStaffSpider(scrapy.Spider):
 
                 # Image extraction
                 image_url = staff.xpath(
-                    './/img[contains(@class, "employee__pic") or contains(@class, "staffpic") or contains(@class, "staff-photo") or contains(@class, "img-responsive")]/@src'
+                    './/img[contains(@class, "employee__pic") or contains(@class, "staffpic") or contains(@class, "staff-photo") or contains(@class, "img-responsive")]/@src | '
+                    './/dd[contains(@class, "photo")]//img/@data-src | '  # First priority: data-src
+                    './/div[contains(@class, "staff-img")]//img/@src | '
+                    './/dd[contains(@class, "photo")]//img/@src'  # Toyota specific
                 ).get()
                 # Fallback for image
                 if not image_url:
                     image_url = staff.xpath('.//div[contains(@class, "staff-img")]//img/@src').get()
-                image_url = response.urljoin(image_url) if image_url else None
+                image_url = response.urljoin(image_url.split('?')[0]) if image_url else None
 
                 bio = staff.xpath(
                     './/p[contains(@class, "bio")]//text() | '
+                    './/dd[contains(@class, "bio")]//text() | '  # Toyota specific
                     './/div[contains(@class, "bio")]/p//text()'
                 ).getall()
                 bio = " ".join([line.strip() for line in bio]) if bio else None
